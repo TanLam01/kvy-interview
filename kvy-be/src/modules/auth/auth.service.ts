@@ -34,8 +34,19 @@ const SEED_USERS = [
 
 @Injectable()
 export class AuthService {
-  private readonly jwtSecret =
-    process.env.JWT_SECRET || 'kvy-tech-takehome-super-secret-jwt-key-2026';
+  private readonly jwtSecret = this.getJwtSecret();
+
+  private getJwtSecret(): string {
+    if (process.env.JWT_SECRET) {
+      return process.env.JWT_SECRET;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('JWT_SECRET is required in production');
+    }
+
+    return 'local-development-only-secret';
+  }
 
   private base64UrlEncode(str: string | Buffer): string {
     const buf = typeof str === 'string' ? Buffer.from(str) : str;

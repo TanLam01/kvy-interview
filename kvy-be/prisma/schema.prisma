@@ -29,6 +29,9 @@ model Verification {
 
   document Document @relation(fields: [documentId], references: [id])
   events   VerificationEvent[]
+
+  @@index([sellerId, createdAt])
+  @@index([status, updatedAt])
 }
 
 model VerificationEvent {
@@ -43,4 +46,6 @@ model VerificationEvent {
   createdAt      DateTime @default(now())
 
   verification Verification @relation(fields: [verificationId], references: [id])
+
+  @@index([verificationId, createdAt])
 }

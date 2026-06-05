@@ -21,41 +21,29 @@ export class VerificationProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<any, any, string>): Promise<any> {
-    const { verificationId, documentId, documentType } = job.data as {
-      verificationId: string;
-      documentId: string;
-      documentType: string;
-    };
+  async process(
+    job: Job<
+      {
+        verificationId: string;
+        documentId: string;
+        documentType: string;
+      },
+      void,
+      string
+    >,
+  ): Promise<void> {
+    const { verificationId, documentId, documentType } = job.data;
 
     this.logger.log(
       `Processing verification job ${job.id} for document ${documentId}`,
     );
 
-    // Fetch the verification record
-    const verification = await this.prisma.verification.findUnique({
-      where: { id: verificationId },
-    });
-
-    if (!verification) {
-      this.logger.warn(
-        `Verification record ${verificationId} not found. Skipping.`,
-      );
-      return;
-    }
-
-    // Guard: If it's already processed, skip (idempotency check)
-    if (verification.status !== 'QUEUED') {
-      this.logger.log(
-        `Verification ${verificationId} is already in status '${verification.status}'. Skipping submission.`,
-      );
-      return;
-    }
-
-    // 1. Transition status from QUEUED to PROCESSING
-    await this.prisma.$transaction(async (tx) => {
-      await tx.verification.update({
-        where: { id: verificationId },
+    const transitioned = await this.prisma.$transaction(async (tx) => {
+      const update = await tx.verification.updateMany({
+        where: {
+          id: verificationId,
+          status: 'QUEUED',
+        },
         data: {
           status: 'PROCESSING',
           attemptCount: {
@@ -64,6 +52,10 @@ export class VerificationProcessor extends WorkerHost {
         },
       });
 
+      if (update.count !== 1) {
+        return false;
+      }
+
       await tx.verificationEvent.create({
         data: {
           verificationId,
@@ -71,10 +63,19 @@ export class VerificationProcessor extends WorkerHost {
           action: 'SUBMIT',
           fromStatus: 'QUEUED',
           toStatus: 'PROCESSING',
-          reason: `Document submitted to external verifier. Attempt count: ${verification.attemptCount + 1}`,
+          reason: `Document submitted to external verifier. Attempt count: ${job.attemptsMade + 1}`,
         },
       });
+
+      return true;
     });
+
+    if (!transitioned) {
+      this.logger.log(
+        `Verification ${verificationId} is missing or no longer queued. Skipping submission.`,
+      );
+      return;
+    }
 
     try {
       // 2. Submit to external verification service via proxy
@@ -93,15 +94,23 @@ export class VerificationProcessor extends WorkerHost {
         `Error submitting verification ${verificationId}: ${errMsg}`,
       );
 
-      // Update database and throw error to let BullMQ handle retry/backoff
+      const exhausted = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
+
       await this.prisma.$transaction(async (tx) => {
-        await tx.verification.update({
-          where: { id: verificationId },
+        const reverted = await tx.verification.updateMany({
+          where: {
+            id: verificationId,
+            status: 'PROCESSING',
+          },
           data: {
-            status: 'QUEUED', // Revert to QUEUED so it can be retried
+            status: exhausted ? 'NEEDS_ATTENTION' : 'QUEUED',
             reason: `Submission failed: ${errMsg}`,
           },
         });
+
+        if (reverted.count !== 1) {
+          return;
+        }
 
         await tx.verificationEvent.create({
           data: {
@@ -109,8 +118,10 @@ export class VerificationProcessor extends WorkerHost {
             actorType: 'SYSTEM',
             action: 'SUBMIT_FAIL',
             fromStatus: 'PROCESSING',
-            toStatus: 'QUEUED',
-            reason: `Failed to submit: ${errMsg}. Retrying via queue...`,
+            toStatus: exhausted ? 'NEEDS_ATTENTION' : 'QUEUED',
+            reason: exhausted
+              ? `Failed to submit after maximum attempts: ${errMsg}`
+              : `Failed to submit: ${errMsg}. Retrying via queue...`,
           },
         });
       });

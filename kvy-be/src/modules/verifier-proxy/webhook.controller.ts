@@ -3,11 +3,13 @@ import {
   Post,
   Body,
   NotFoundException,
+  ConflictException,
   Logger,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WebhookDto } from './dto/webhook.dto';
 
 @Controller('verifier-webhook')
 export class WebhookController {
@@ -17,15 +19,7 @@ export class WebhookController {
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(
-    @Body()
-    body: {
-      verificationId: string;
-      documentId: string;
-      status: 'verified' | 'rejected' | 'inconclusive';
-      reason?: string;
-    },
-  ) {
+  async handleWebhook(@Body() body: WebhookDto) {
     const { verificationId, documentId, status, reason } = body;
 
     this.logger.log(
@@ -45,15 +39,19 @@ export class WebhookController {
       );
     }
 
-    // CRITICAL GUARD: Prevent late automated results from overwriting terminal manual decisions
-    const terminalStates = ['VERIFIED', 'REJECTED'];
-    if (terminalStates.includes(verification.status)) {
+    if (verification.documentId !== documentId) {
+      throw new NotFoundException(
+        `Document ${documentId} does not belong to verification ${verificationId}`,
+      );
+    }
+
+    if (verification.status !== 'PROCESSING') {
       this.logger.warn(
-        `Webhook warning: Ignored late result for verification ${verificationId} because it is already in terminal state '${verification.status}'`,
+        `Ignored result for verification ${verificationId} because it is in state '${verification.status}'`,
       );
       return {
         status: 'ignored',
-        message: `Verification is already in terminal state '${verification.status}'.`,
+        message: `Verification is not awaiting an automated result. Current state: '${verification.status}'.`,
       };
     }
 
@@ -67,10 +65,13 @@ export class WebhookController {
       dbStatus = 'UNDER_MANUAL_REVIEW'; // Inconclusive goes to manual review
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      // 1. Update Verification status
-      await tx.verification.update({
-        where: { id: verificationId },
+    const processed = await this.prisma.$transaction(async (tx) => {
+      const update = await tx.verification.updateMany({
+        where: {
+          id: verificationId,
+          documentId,
+          status: 'PROCESSING',
+        },
         data: {
           status: dbStatus,
           automatedResult: status.toUpperCase(),
@@ -78,7 +79,10 @@ export class WebhookController {
         },
       });
 
-      // 2. Log VerificationEvent
+      if (update.count !== 1) {
+        return false;
+      }
+
       await tx.verificationEvent.create({
         data: {
           verificationId,
@@ -91,7 +95,15 @@ export class WebhookController {
             `Automated verification completed with outcome: ${status}`,
         },
       });
+
+      return true;
     });
+
+    if (!processed) {
+      throw new ConflictException(
+        'Verification state changed while processing the webhook.',
+      );
+    }
 
     this.logger.log(
       `Updated verification ${verificationId} state to ${dbStatus}`,

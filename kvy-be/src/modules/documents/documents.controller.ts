@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import { DocumentsService } from './documents.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard, Roles } from '../auth/guards/roles.guard';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 
 // Ensure uploads directory exists
 const uploadDir = './uploads';
@@ -63,7 +64,7 @@ export class DocumentsController {
   async uploadDocument(
     @UploadedFile() file: Express.Multer.File,
     @Body('documentType') documentType: string,
-    @Req() req: any,
+    @Req() req: AuthenticatedRequest,
   ) {
     if (!file) {
       throw new BadRequestException('Document file is required');
@@ -91,7 +92,7 @@ export class DocumentsController {
   }
 
   @Get('status')
-  async getStatus(@Req() req: any) {
+  async getStatus(@Req() req: AuthenticatedRequest) {
     const sellerId = req.user.id;
     return this.documentsService.getVerificationStatus(sellerId);
   }

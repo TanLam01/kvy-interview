@@ -20,32 +20,33 @@ export class DocumentsService {
   }) {
     const { sellerId, fileName, documentType } = data;
 
-    // Guard: check if there is already a terminal VERIFIED state
-    // or active verification in progress (QUEUED, PROCESSING, UNDER_MANUAL_REVIEW)
-    const existingVerification = await this.prisma.verification.findFirst({
-      where: { sellerId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const result = await this.prisma.$transaction(async (tx) => {
+      // Serialize submissions for a seller so concurrent uploads cannot create
+      // duplicate paid verification attempts.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${sellerId}))`;
 
-    if (existingVerification) {
-      if (existingVerification.status === 'VERIFIED') {
+      const existingVerification = await tx.verification.findFirst({
+        where: { sellerId },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (existingVerification?.status === 'VERIFIED') {
         throw new BadRequestException(
           'You are already verified and cannot submit another document.',
         );
       }
+
       if (
-        existingVerification.status === 'QUEUED' ||
-        existingVerification.status === 'PROCESSING' ||
-        existingVerification.status === 'UNDER_MANUAL_REVIEW'
+        existingVerification &&
+        ['QUEUED', 'PROCESSING', 'UNDER_MANUAL_REVIEW'].includes(
+          existingVerification.status,
+        )
       ) {
         throw new BadRequestException(
           `A verification attempt is already in progress (Status: ${existingVerification.status}).`,
         );
       }
-    }
 
-    // Begin Transaction to save database records
-    return this.prisma.$transaction(async (tx) => {
       // 1. Create Document
       const document = await tx.document.create({
         data: {
@@ -61,7 +62,7 @@ export class DocumentsService {
           documentId: document.id,
           sellerId,
           status: 'QUEUED',
-          attemptCount: 1,
+          attemptCount: 0,
         },
       });
 
@@ -78,30 +79,51 @@ export class DocumentsService {
         },
       });
 
-      // 4. Add to BullMQ verification queue
-      await this.verificationQueue.add(
-        'verify-document',
-        {
-          verificationId: verification.id,
-          documentId: document.id,
-          documentType,
-        },
-        {
-          jobId: verification.id, // Idempotency: ensures only one active job per verification ID
-          removeOnComplete: true,
-          removeOnFail: false,
-        },
-      );
-
-      this.logger.log(
-        `Queued document verification for seller: ${sellerId}, document ID: ${document.id}`,
-      );
-
       return {
         document,
         verification,
       };
     });
+
+    // Publish only after the database transaction commits. The stable job ID
+    // makes repeated enqueue attempts idempotent.
+    try {
+      await this.verificationQueue.add(
+        'verify-document',
+        {
+          verificationId: result.verification.id,
+          documentId: result.document.id,
+          documentType,
+        },
+        {
+          jobId: result.verification.id,
+          attempts: 5,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      );
+    } catch {
+      await this.prisma.verification.update({
+        where: { id: result.verification.id },
+        data: {
+          status: 'NEEDS_ATTENTION',
+          reason: 'Failed to enqueue verification request.',
+        },
+      });
+      throw new BadRequestException(
+        'Document was saved, but verification could not be queued. Please contact support.',
+      );
+    }
+
+    this.logger.log(
+      `Queued document verification for seller: ${sellerId}, document ID: ${result.document.id}`,
+    );
+
+    return result;
   }
 
   async getVerificationStatus(sellerId: string) {

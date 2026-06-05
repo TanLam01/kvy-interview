@@ -1,28 +1,15 @@
 import { Controller, Post, Body, Res, HttpStatus } from '@nestjs/common';
 import type { Response } from 'express';
 import { MockVerificationService } from './mock-verification.service';
-
-interface VerifyBody {
-  verificationId?: string;
-  documentId?: string;
-  documentType?: string;
-  callbackUrl?: string;
-}
+import { VerifyDto } from './dto/verify.dto';
 
 @Controller('mock-verifier')
 export class MockVerificationController {
   constructor(private readonly mockService: MockVerificationService) {}
 
   @Post('verify')
-  async verify(@Body() body: VerifyBody, @Res() res: Response) {
+  async verify(@Body() body: VerifyDto, @Res() res: Response) {
     const { verificationId, documentId, documentType, callbackUrl } = body;
-
-    if (!verificationId || !documentId || !documentType || !callbackUrl) {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        message:
-          'verificationId, documentId, documentType, and callbackUrl are required',
-      });
-    }
 
     const result = await this.mockService.verifyDocument({
       verificationId,

@@ -8,12 +8,15 @@ import {
   UseGuards,
   BadRequestException,
   NotFoundException,
+  ConflictException,
   HttpStatus,
   HttpCode,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard, Roles } from '../auth/guards/roles.guard';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
+import { AdminDecisionDto } from './dto/admin-decision.dto';
 
 @UseGuards(AuthGuard, RolesGuard)
 @Roles('ADMIN')
@@ -58,17 +61,11 @@ export class AdminController {
   @HttpCode(HttpStatus.OK)
   async makeDecision(
     @Param('id') id: string,
-    @Body() body: { action: 'verify' | 'reject'; reason?: string },
-    @Req() req: any,
+    @Body() body: AdminDecisionDto,
+    @Req() req: AuthenticatedRequest,
   ) {
     const { action, reason } = body;
     const adminId = req.user.id;
-
-    if (!action || !['verify', 'reject'].includes(action)) {
-      throw new BadRequestException(
-        "Action must be either 'verify' or 'reject'",
-      );
-    }
 
     const verification = await this.prisma.verification.findUnique({
       where: { id },
@@ -89,13 +86,20 @@ export class AdminController {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       // Update Verification status and reason
-      const v = await tx.verification.update({
-        where: { id },
+      const result = await tx.verification.updateMany({
+        where: {
+          id,
+          status: 'UNDER_MANUAL_REVIEW',
+        },
         data: {
           status: newStatus,
           reason: reason || null,
         },
       });
+
+      if (result.count !== 1) {
+        return null;
+      }
 
       // Create VerificationEvent logging who performed the action, when, and what changed
       await tx.verificationEvent.create({
@@ -110,8 +114,14 @@ export class AdminController {
         },
       });
 
-      return v;
+      return tx.verification.findUniqueOrThrow({ where: { id } });
     });
+
+    if (!updated) {
+      throw new ConflictException(
+        'Verification state changed while applying the admin decision.',
+      );
+    }
 
     return {
       message: `Verification successfully updated to ${newStatus}`,

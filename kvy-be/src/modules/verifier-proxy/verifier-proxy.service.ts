@@ -1,11 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
 
 @Injectable()
 export class VerifierProxyService {
   private readonly logger = new Logger(VerifierProxyService.name);
-
-  constructor(private readonly prisma: PrismaService) {}
 
   async submitToVerifier(
     verificationId: string,

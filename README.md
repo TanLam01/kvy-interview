@@ -1,11 +1,11 @@
 # Marketplace Seller Document Verification Workflow
 
-A complete, end-to-end full-stack document verification workflow for a marketplace, built using TypeScript, NestJS, React, Prisma, Postgres, Redis, and BullMQ.
+An end-to-end local full-stack document verification workflow for a marketplace, built using TypeScript, NestJS, React, Prisma, Postgres, Redis, and BullMQ.
 
 ---
 
 ## Deployed URL
-*   **Staging URL**: `https://kvy-tech-marketplace-onboarding.vercel.app` *(Placeholder / Deployed target)*
+*   **Staging URL**: Not deployed yet.
 *   **Local URL**: `http://localhost:5173` (Frontend) & `http://localhost:3000` (Backend)
 
 ---
@@ -37,7 +37,7 @@ The application is pre-seeded with the following credentials (also available via
 
 ### 3. Asynchronous Verification Queue (BullMQ + Redis)
 *   **Throttling**: Workers process jobs at a maximum rate of 100 requests per minute to respect the external service cap.
-*   **Transient Retries**: Configured with exponential backoff retries (up to 5 attempts) to absorb rate limits (429 errors).
+*   **Transient Retries**: Configured with exponential backoff retries (up to 5 attempts). Exhausted jobs move to `NEEDS_ATTENTION`.
 
 ### 4. Mock Verification Service
 *   **Sliding Window Rate Limiter**: Uses Redis sorted sets to count requests in the last 60 seconds. If request count > 100, returns HTTP `429 Too Many Requests`.
@@ -45,7 +45,7 @@ The application is pre-seeded with the following credentials (also available via
 
 ### 5. Webhook Receiver & Guards
 *   **Webhook Receiver**: Processes callback results and logs events.
-*   **Terminal State Guard**: If a verification is already `VERIFIED` or `REJECTED` (terminal states decided by an admin override), any late webhook results are silently ignored, ensuring human decisions are never overwritten by late automation.
+*   **State Transition Guard**: Automated callbacks can only transition records from `PROCESSING`; late callbacks cannot overwrite manual-review or terminal states.
 
 ### 6. Admin Manual Review Panel
 *   **Pending Queue**: List of verifications stuck in `inconclusive` (`UNDER_MANUAL_REVIEW` status).
@@ -58,6 +58,7 @@ The application is pre-seeded with the following credentials (also available via
 
 ### What is Partial
 *   **Document OCR Scanning**: No real OCR service (like Amazon Textract or Google Cloud Document AI) is integrated. The mock verifier evaluates submissions randomly using document metadata.
+*   **Orphan Reconciliation**: Exhausted submissions are surfaced as `NEEDS_ATTENTION`, but no scheduled reconciliation worker automatically reclaims them yet.
 
 ### What is Stubbed
 *   **Notifications**: Notifications (e.g. Email/SMS alerts to sellers upon manual decision) are mocked by writing records to `VerificationEvent` logs in the database.
@@ -95,7 +96,7 @@ docker run -d --name redis -p 6379:6379 redis/redis-stack-server:latest
     ```
 3.  Apply Prisma database schema and generate Prisma client:
     ```bash
-    npx prisma db push
+    npx prisma migrate deploy
     npx prisma generate
     ```
 4.  Start the NestJS dev server:

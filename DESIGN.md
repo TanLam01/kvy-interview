@@ -106,13 +106,8 @@ We implement a **Dual-layered Reconciliation Strategy**:
 1.  **Queue Retries (Transient Failures)**:
     *   **What is retried**: Submission attempts from the worker to the external service.
     *   **Backoff Strategy**: Exponential backoff. We configure BullMQ to retry failed submissions up to **5 times**, starting with a **2-second delay** doubling each time (2s, 4s, 8s, 16s, 32s).
-    *   **Exhaustion behavior**: If all 5 attempts fail, the queue job is marked as failed. The verification is reverted to `QUEUED` with a failure reason, and a notification is sent to our error monitoring channel (Sentry).
+    *   **Exhaustion behavior**: If all 5 attempts fail, the queue job is marked as failed and the verification moves to `NEEDS_ATTENTION` for operational follow-up.
 
-2.  **Hourly Database Reconciliation Cron (Orphan Reclamation)**:
-    *   An automated cron job runs every hour to query the database:
-        ```sql
-        SELECT * FROM "Verification" 
-        WHERE "status" = 'PROCESSING' 
-        AND "updatedAt" < NOW() - INTERVAL '30 minutes';
-        ```
-    *   For each orphaned record, the script queries the external service's status endpoint (or our queue history). If it was never received by the external service, the script triggers a queue retry. If it has been processed, the script fetches the result manually and completes the transition.
+2.  **Webhook Delivery Retries and Explicit Operational State**:
+    *   The mock verifier retries webhook delivery three times with exponential delays of 1s and 2s.
+    *   An hourly orphan-reconciliation cron was deliberately not built because the mock verifier has no durable status-query API. A production implementation would add that API first, then reconcile stale `PROCESSING` records without risking a duplicate paid call.

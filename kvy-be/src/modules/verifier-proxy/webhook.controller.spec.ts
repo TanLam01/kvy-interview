@@ -9,7 +9,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
   const mockPrismaService = {
     verification: {
       findUnique: jest.fn(),
-      update: jest.fn(),
+      updateMany: jest.fn(),
     },
     verificationEvent: {
       create: jest.fn(),
@@ -78,10 +78,11 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
 
     expect(result).toEqual({
       status: 'ignored',
-      message: "Verification is already in terminal state 'VERIFIED'.",
+      message:
+        "Verification is not awaiting an automated result. Current state: 'VERIFIED'.",
     });
     // Check that we did NOT call transaction or database update methods
-    expect(mockPrismaService.verification.update).not.toHaveBeenCalled();
+    expect(mockPrismaService.verification.updateMany).not.toHaveBeenCalled();
     expect(mockPrismaService.verificationEvent.create).not.toHaveBeenCalled();
   });
 
@@ -105,10 +106,11 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
 
     expect(result).toEqual({
       status: 'ignored',
-      message: "Verification is already in terminal state 'REJECTED'.",
+      message:
+        "Verification is not awaiting an automated result. Current state: 'REJECTED'.",
     });
     // Check that we did NOT call transaction or database update methods
-    expect(mockPrismaService.verification.update).not.toHaveBeenCalled();
+    expect(mockPrismaService.verification.updateMany).not.toHaveBeenCalled();
     expect(mockPrismaService.verificationEvent.create).not.toHaveBeenCalled();
   });
 
@@ -122,10 +124,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
     mockPrismaService.verification.findUnique.mockResolvedValue(
       existingVerification,
     );
-    mockPrismaService.verification.update.mockResolvedValue({
-      ...existingVerification,
-      status: 'VERIFIED',
-    });
+    mockPrismaService.verification.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await controller.handleWebhook({
       verificationId: 'v-123',
@@ -140,8 +139,12 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
     });
 
     // Check that transaction callback updated the DB and logged the event
-    expect(mockPrismaService.verification.update).toHaveBeenCalledWith({
-      where: { id: 'v-123' },
+    expect(mockPrismaService.verification.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'v-123',
+        documentId: 'doc-123',
+        status: 'PROCESSING',
+      },
       data: {
         status: 'VERIFIED',
         automatedResult: 'VERIFIED',
@@ -159,5 +162,23 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
         reason: 'Automated check passed',
       },
     });
+  });
+
+  it('should ignore automated results while under manual review', async () => {
+    mockPrismaService.verification.findUnique.mockResolvedValue({
+      id: 'v-123',
+      documentId: 'doc-123',
+      sellerId: 'seller-123',
+      status: 'UNDER_MANUAL_REVIEW',
+    });
+
+    const result = await controller.handleWebhook({
+      verificationId: 'v-123',
+      documentId: 'doc-123',
+      status: 'verified',
+    });
+
+    expect(result.status).toBe('ignored');
+    expect(mockPrismaService.verification.updateMany).not.toHaveBeenCalled();
   });
 });
