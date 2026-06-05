@@ -1,0 +1,46 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Document {
+  id           String   @id @default(uuid())
+  sellerId    String
+  fileName    String
+  documentType String
+  createdAt   DateTime @default(now())
+
+  verification Verification?
+}
+
+model Verification {
+  id              String   @id @default(uuid())
+  documentId      String   @unique
+  sellerId        String
+  status          String
+  automatedResult String?
+  reason          String?
+  attemptCount    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id])
+  events   VerificationEvent[]
+}
+
+model VerificationEvent {
+  id             String   @id @default(uuid())
+  verificationId String
+  actorType      String
+  actorId        String?
+  action         String
+  fromStatus     String?
+  toStatus       String?
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  verification Verification @relation(fields: [verificationId], references: [id])
+}

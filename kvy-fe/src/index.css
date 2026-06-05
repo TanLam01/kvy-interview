@@ -1,0 +1,108 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* HSL Color System */
+  --bg-base: hsl(225, 28%, 6%);
+  --bg-surface: hsl(224, 24%, 12%);
+  --bg-surface-elevated: hsl(224, 24%, 16%);
+  --bg-glass: rgba(18, 22, 33, 0.7);
+  --border-color: hsla(224, 20%, 30%, 0.3);
+  --border-color-focus: hsla(250, 85%, 65%, 0.5);
+  
+  --text-primary: hsl(210, 20%, 98%);
+  --text-secondary: hsl(218, 16%, 75%);
+  --text-muted: hsl(218, 12%, 55%);
+  
+  --brand-primary: hsl(250, 85%, 65%);
+  --brand-primary-hover: hsl(250, 85%, 70%);
+  --brand-glow: rgba(99, 102, 241, 0.15);
+  
+  --success: hsl(150, 84%, 40%);
+  --success-glow: rgba(16, 185, 129, 0.1);
+  --error: hsl(355, 84%, 55%);
+  --error-glow: rgba(239, 68, 68, 0.1);
+  --warning: hsl(38, 92%, 50%);
+  --warning-glow: rgba(245, 158, 11, 0.1);
+  --info: hsl(200, 90%, 50%);
+  
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
+  
+  --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-image: 
+    radial-gradient(at 0% 0%, hsla(253, 80%, 50%, 0.08) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, hsla(200, 80%, 50%, 0.05) 0px, transparent 50%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-pulse {
+  animation: pulse 2s infinite ease-in-out;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-elevated);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-color);
+}
