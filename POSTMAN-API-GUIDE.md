@@ -40,6 +40,7 @@ Trong Postman, tao Environment ten `KVY Local` voi cac bien:
 | `adminToken` | De trong |
 | `verificationId` | De trong |
 | `documentId` | De trong |
+| `webhookSecret` | Gia tri `WEBHOOK_SECRET` trong `kvy-be/.env` |
 
 Chon environment `KVY Local` truoc khi gui request.
 
@@ -56,6 +57,8 @@ Co the xem danh sach tai khoan bang:
 ```http
 GET {{baseUrl}}/auth/seeds
 ```
+
+Endpoint nay chi hoat dong khi `SHOW_SEED_CREDENTIALS=true`.
 
 ## 4. Login seller
 
@@ -216,7 +219,23 @@ Authorization: Bearer {{adminToken}}
 
 Response gom document, trang thai hien tai va danh sach audit events.
 
-## 10. Admin approve hoac reject
+## 10. Admin xem tat ca attempts va tai document
+
+Lay toi da 100 verification attempts gan nhat:
+
+```http
+GET {{baseUrl}}/admin/verifications
+Authorization: Bearer {{adminToken}}
+```
+
+Tai document cua mot verification:
+
+```http
+GET {{baseUrl}}/admin/verifications/{{verificationId}}/document
+Authorization: Bearer {{adminToken}}
+```
+
+## 11. Admin approve hoac reject
 
 API nay chi chay khi verification dang o `UNDER_MANUAL_REVIEW`.
 
@@ -255,7 +274,7 @@ reject
 
 `reason` la optional.
 
-## 11. Ep flow inconclusive de test admin
+## 12. Ep flow inconclusive de test admin
 
 Mock verifier tra ket qua ngau nhien, nen khong phai lan upload nao cung vao manual review.
 De test admin chac chan, can gui webhook thu cong trong luc verification dang
@@ -266,6 +285,7 @@ Truoc tien goi API status seller de lay `verificationId` va `documentId`, sau do
 ```http
 POST {{baseUrl}}/verifier-webhook
 Content-Type: application/json
+x-verifier-signature: <HMAC-SHA256 signature>
 ```
 
 Body:
@@ -277,6 +297,37 @@ Body:
   "status": "inconclusive",
   "reason": "Manual Postman test: document khong du ro"
 }
+```
+
+Webhook bat buoc co chu ky HMAC. Trong tab `Scripts` -> `Pre-request`, them:
+
+```javascript
+const CryptoJS = pm.require("npm:crypto-js@4.2.0");
+const sortObject = (value) => {
+  if (Array.isArray(value)) return value.map(sortObject);
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((result, key) => {
+        result[key] = sortObject(value[key]);
+        return result;
+      }, {});
+  }
+  return value;
+};
+
+const rawBody = JSON.stringify(
+  sortObject(JSON.parse(pm.variables.replaceIn(pm.request.body.raw)))
+);
+const signature = CryptoJS.HmacSHA256(
+  rawBody,
+  pm.environment.get("webhookSecret")
+).toString();
+
+pm.request.headers.upsert({
+  key: "x-verifier-signature",
+  value: signature
+});
 ```
 
 `status` chi chap nhan:
@@ -296,7 +347,7 @@ Sau do:
 Luu y: webhook chi duoc xu ly khi verification dang `PROCESSING`. Neu callback den
 khi verification o state khac, response se co `status: "ignored"`.
 
-## 12. Goi truc tiep mock verifier
+## 13. Goi truc tiep mock verifier
 
 API nay chu yeu dung de test mock external service. Flow upload binh thuong se tu
 goi API nay, khong can goi thu cong.
@@ -329,7 +380,7 @@ Neu vuot qua `100 calls/minute`:
 429 Too Many Requests
 ```
 
-## 13. Thu tu test end-to-end de xuat
+## 14. Thu tu test end-to-end de xuat
 
 1. `GET {{baseUrl}}` de kiem tra backend.
 2. Login seller va luu `sellerToken`.
@@ -342,7 +393,7 @@ Neu vuot qua `100 calls/minute`:
 9. Admin approve hoac reject.
 10. Goi lai seller status de xem final outcome.
 
-## 14. Loi thuong gap
+## 15. Loi thuong gap
 
 ### `401 Unauthorized`
 
@@ -373,7 +424,7 @@ Kiem tra:
 ### Khong thay pending review
 
 Verification phai co status `UNDER_MANUAL_REVIEW`. Dung flow webhook inconclusive
-o muc 11 de tao state nay.
+o muc 12 de tao state nay.
 
 ### `Cannot make decision on verification`
 

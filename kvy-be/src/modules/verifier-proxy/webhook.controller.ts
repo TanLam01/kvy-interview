@@ -4,12 +4,18 @@ import {
   Body,
   NotFoundException,
   ConflictException,
+  Headers,
   Logger,
+  UnauthorizedException,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WebhookDto } from './dto/webhook.dto';
+import {
+  isValidWebhookSignature,
+  WEBHOOK_SIGNATURE_HEADER,
+} from './webhook-signature';
 
 @Controller('verifier-webhook')
 export class WebhookController {
@@ -19,7 +25,14 @@ export class WebhookController {
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  async handleWebhook(@Body() body: WebhookDto) {
+  async handleWebhook(
+    @Body() body: WebhookDto,
+    @Headers(WEBHOOK_SIGNATURE_HEADER) signature?: string,
+  ) {
+    if (!isValidWebhookSignature(body, signature)) {
+      throw new UnauthorizedException('Invalid webhook signature');
+    }
+
     const { verificationId, documentId, status, reason } = body;
 
     this.logger.log(
@@ -95,6 +108,19 @@ export class WebhookController {
             `Automated verification completed with outcome: ${status}`,
         },
       });
+
+      if (dbStatus === 'VERIFIED' || dbStatus === 'REJECTED') {
+        await tx.verificationEvent.create({
+          data: {
+            verificationId,
+            actorType: 'SYSTEM',
+            action: 'SELLER_NOTIFICATION',
+            fromStatus: dbStatus,
+            toStatus: dbStatus,
+            reason: reason || `Seller notified of final outcome: ${dbStatus}`,
+          },
+        });
+      }
 
       return true;
     });

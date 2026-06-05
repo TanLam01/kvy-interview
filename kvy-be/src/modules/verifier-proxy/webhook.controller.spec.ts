@@ -1,7 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { WebhookController } from './webhook.controller';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { signWebhookPayload } from './webhook-signature';
 
 describe('WebhookController (Terminal State Guard Tests)', () => {
   let controller: WebhookController;
@@ -20,6 +21,17 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
   mockPrismaService.$transaction.mockImplementation(
     (cb: (tx: any) => unknown) => cb(mockPrismaService),
   );
+
+  const handleWebhook = (body: {
+    verificationId: string;
+    documentId: string;
+    status: 'verified' | 'rejected' | 'inconclusive';
+    reason?: string;
+  }) => controller.handleWebhook(body, signWebhookPayload(body));
+
+  beforeAll(() => {
+    process.env.WEBHOOK_SECRET = 'test-webhook-secret';
+  });
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -46,7 +58,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
     mockPrismaService.verification.findUnique.mockResolvedValue(null);
 
     await expect(
-      controller.handleWebhook({
+      handleWebhook({
         verificationId: 'non-existent-id',
         documentId: 'doc-id',
         status: 'verified',
@@ -69,7 +81,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
       existingVerification,
     );
 
-    const result = await controller.handleWebhook({
+    const result = await handleWebhook({
       verificationId: 'v-123',
       documentId: 'doc-123',
       status: 'rejected',
@@ -97,7 +109,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
       existingVerification,
     );
 
-    const result = await controller.handleWebhook({
+    const result = await handleWebhook({
       verificationId: 'v-123',
       documentId: 'doc-123',
       status: 'verified',
@@ -126,7 +138,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
     );
     mockPrismaService.verification.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await controller.handleWebhook({
+    const result = await handleWebhook({
       verificationId: 'v-123',
       documentId: 'doc-123',
       status: 'verified',
@@ -172,7 +184,7 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
       status: 'UNDER_MANUAL_REVIEW',
     });
 
-    const result = await controller.handleWebhook({
+    const result = await handleWebhook({
       verificationId: 'v-123',
       documentId: 'doc-123',
       status: 'verified',
@@ -180,5 +192,18 @@ describe('WebhookController (Terminal State Guard Tests)', () => {
 
     expect(result.status).toBe('ignored');
     expect(mockPrismaService.verification.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('should reject an invalid webhook signature', async () => {
+    await expect(
+      controller.handleWebhook(
+        {
+          verificationId: 'v-123',
+          documentId: 'doc-123',
+          status: 'verified',
+        },
+        'invalid',
+      ),
+    ).rejects.toThrow(UnauthorizedException);
   });
 });

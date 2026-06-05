@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
@@ -30,6 +31,9 @@ export class AuthController {
 
   @Get('seeds')
   getSeeds() {
+    if (process.env.SHOW_SEED_CREDENTIALS !== 'true') {
+      throw new NotFoundException();
+    }
     return this.authService.getSeedUsers();
   }
 }

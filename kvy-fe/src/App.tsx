@@ -13,7 +13,16 @@ interface VerificationEvent {
   verificationId: string;
   actorType: 'SELLER' | 'ADMIN' | 'SYSTEM';
   actorId: string | null;
-  action: 'UPLOAD' | 'SUBMIT' | 'SUBMIT_FAIL' | 'RECEIVE_RESULT' | 'ADMIN_DECISION';
+  action:
+    | 'UPLOAD'
+    | 'SUBMIT'
+    | 'SUBMIT_FAIL'
+    | 'RECEIVE_RESULT'
+    | 'ADMIN_DECISION'
+    | 'SELLER_NOTIFICATION'
+    | 'ENQUEUE_FAIL'
+    | 'RECONCILE_REQUEUE'
+    | 'RECONCILE_TIMEOUT';
   fromStatus: string | null;
   toStatus: string | null;
   reason: string | null;
@@ -24,7 +33,13 @@ interface Verification {
   id: string;
   documentId: string;
   sellerId: string;
-  status: 'QUEUED' | 'PROCESSING' | 'VERIFIED' | 'REJECTED' | 'UNDER_MANUAL_REVIEW';
+  status:
+    | 'QUEUED'
+    | 'PROCESSING'
+    | 'VERIFIED'
+    | 'REJECTED'
+    | 'UNDER_MANUAL_REVIEW'
+    | 'NEEDS_ATTENTION';
   automatedResult: string | null;
   reason: string | null;
   attemptCount: number;
@@ -330,6 +345,29 @@ export default function App() {
       alert(err.message || 'An error occurred.');
     } finally {
       setSubmittingDecision(false);
+    }
+  };
+
+  const handleOpenDocument = async () => {
+    if (!user || !selectedReview) return;
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/admin/verifications/${selectedReview.id}/document`,
+        {
+          headers: { Authorization: `Bearer ${user.token}` },
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to load document.');
+      }
+
+      const url = URL.createObjectURL(await response.blob());
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to load document.');
     }
   };
 
@@ -797,6 +835,13 @@ export default function App() {
                                 {selectedReview.document?.fileName}
                               </span>
                             </div>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={handleOpenDocument}
+                            >
+                              Open uploaded document
+                            </button>
                             <div className="doc-info-row">
                               <span className="doc-info-label">Automated System Check</span>
                               <span className="doc-info-val" style={{ color: 'var(--warning)' }}>INCONCLUSIVE</span>

@@ -11,7 +11,7 @@ The single product-owner question whose answer would most change the architectur
 
 ### Design A: Strict Blocker (Assumed & Built)
 *   **Workflow**: Upload Document → Queued → Processing → Verified → Can List Products.
-*   **Architecture**: High-consistency, transactional state machine. Seller registration is decoupled from product listing authorization. If verification is pending, listing endpoints return HTTP `403 Forbidden`.
+*   **Architecture**: High-consistency, transactional state machine. A future listing endpoint would return HTTP `403 Forbidden` unless the seller is verified. Product listing itself is outside this implementation slice.
 *   **Pros**: Complete operational safety. Zero risk of unverified merchants selling items.
 *   **Cons**: Higher friction for sellers. Onboarding delays directly affect listing conversion.
 
@@ -59,11 +59,14 @@ stateDiagram-v2
     [*] --> QUEUED : Seller Uploads Document
     QUEUED --> PROCESSING : Worker processes job
     PROCESSING --> QUEUED : Submission fails (Transient error, retrying)
+    PROCESSING --> NEEDS_ATTENTION : Retries exhausted or callback timeout
     PROCESSING --> VERIFIED : Webhook: success
     PROCESSING --> REJECTED : Webhook: rejected
     PROCESSING --> UNDER_MANUAL_REVIEW : Webhook: inconclusive
     UNDER_MANUAL_REVIEW --> VERIFIED : Admin approves
     UNDER_MANUAL_REVIEW --> REJECTED : Admin rejects
+    QUEUED --> NEEDS_ATTENTION : Queue publish failure
+    NEEDS_ATTENTION --> [*] : Operational terminal; manual follow-up
     VERIFIED --> [*] : Terminal State
     REJECTED --> [*] : Terminal State
 ```
@@ -74,24 +77,24 @@ stateDiagram-v2
 > 
 > **The Danger**: If a seller's verification is inconclusive (`UNDER_MANUAL_REVIEW`) and a human admin reviews the document, deciding to **REJECT** it, the record transitions to `REJECTED`. If a delayed webhook callback (due to network latency or external service retries) arrives 5 minutes later stating the automated check was `verified`, it could overwrite the admin's decision to `VERIFIED`.
 >
-> **The Guard**: In our `WebhookController`, we enforce a guard: if the current verification status is already `VERIFIED` or `REJECTED` (terminal states), the payload is ignored:
+> **The Guard**: In our `WebhookController`, automated callbacks can only update a record currently in `PROCESSING`. The state condition is checked atomically in the database:
 > ```typescript
-> const terminalStates = ['VERIFIED', 'REJECTED'];
-> if (terminalStates.includes(verification.status)) {
->   return { status: 'ignored' };
-> }
+> updateMany({
+>   where: { id: verificationId, status: 'PROCESSING' },
+>   data: { status: dbStatus }
+> })
 > ```
 
 ---
 
 ## 4. What Was Deliberately Not Built
 
-### Cut Feature: Webhook Signature Verification (HMAC-SHA256)
-*   **What was cut**: Authenticating callbacks from the external verification service using cryptographic signatures.
-*   **Why it was correct for v1**: In a v1 slice, demonstrating the state machine, BullMQ queue, and rate limiting is the priority. Implementing cryptographic key sharing and validation adds code bloat without changing the core architectural flow.
-*   **Not just convenience**: Cryptographic validation requires key-rotation infrastructure, which is a production concern, not a validation concern.
-*   **Risk Created**: An attacker could spoof callback events by POSTing to `/api/verifier-webhook`, marking any seller as verified.
-*   **Mitigation**: The webhook endpoint remains internal or behind an API gateway in staging, and is fully signed with HMAC header checks in production.
+### Cut Feature: Durable External Verifier Status API
+*   **What was cut**: A durable mock-verifier job store and status-query endpoint.
+*   **Why it was correct for v1**: The slice demonstrates async submission, rate limiting, HMAC callbacks, idempotency, and manual review without building a second persistent workflow engine.
+*   **Not just convenience**: Automatically retrying an uncertain `PROCESSING` request could create another paid `$2` call. Without a durable external status API, moving it to `NEEDS_ATTENTION` is the safer cost-control choice.
+*   **Risk Created**: Operations must manually resolve timed-out `PROCESSING` records.
+*   **Mitigation**: Reconciliation detects stale records, re-enqueues missing `QUEUED` jobs, and moves uncertain `PROCESSING` records to `NEEDS_ATTENTION`.
 
 ---
 
@@ -105,9 +108,9 @@ We implement a **Dual-layered Reconciliation Strategy**:
 
 1.  **Queue Retries (Transient Failures)**:
     *   **What is retried**: Submission attempts from the worker to the external service.
-    *   **Backoff Strategy**: Exponential backoff. We configure BullMQ to retry failed submissions up to **5 times**, starting with a **2-second delay** doubling each time (2s, 4s, 8s, 16s, 32s).
+    *   **Backoff Strategy**: Exponential backoff. We configure BullMQ to attempt submission up to **5 times**, starting with a **2-second delay** and doubling between retries.
     *   **Exhaustion behavior**: If all 5 attempts fail, the queue job is marked as failed and the verification moves to `NEEDS_ATTENTION` for operational follow-up.
 
 2.  **Webhook Delivery Retries and Explicit Operational State**:
     *   The mock verifier retries webhook delivery three times with exponential delays of 1s and 2s.
-    *   An hourly orphan-reconciliation cron was deliberately not built because the mock verifier has no durable status-query API. A production implementation would add that API first, then reconcile stale `PROCESSING` records without risking a duplicate paid call.
+    *   Reconciliation re-enqueues stale `QUEUED` records with no active BullMQ job and moves stale `PROCESSING` records to `NEEDS_ATTENTION`. A production implementation would add a durable external status API before automatically retrying uncertain paid calls.

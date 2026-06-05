@@ -3,8 +3,13 @@ import {
   Logger,
   OnModuleDestroy,
   OnModuleInit,
+  BadRequestException,
 } from '@nestjs/common';
 import Redis from 'ioredis';
+import {
+  signWebhookPayload,
+  WEBHOOK_SIGNATURE_HEADER,
+} from '../verifier-proxy/webhook-signature';
 
 @Injectable()
 export class MockVerificationService implements OnModuleInit, OnModuleDestroy {
@@ -31,14 +36,25 @@ export class MockVerificationService implements OnModuleInit, OnModuleDestroy {
     documentType: string;
     callbackUrl: string;
   }): Promise<{ status: 'accepted' } | { status: 'rate_limited' }> {
+    const allowedCallbackUrl =
+      process.env.WEBHOOK_URL || 'http://localhost:3000/api/verifier-webhook';
+
+    if (payload.callbackUrl !== allowedCallbackUrl) {
+      throw new BadRequestException('callbackUrl is not allowed');
+    }
+
     const now = Date.now();
     const oneMinuteAgo = now - 60000;
     const redisKey = 'mock-verifier:rate-limit-tracker';
+    const idempotencyKey = `mock-verifier:idempotency:${payload.verificationId}`;
 
     try {
       const uniqueId = `${now}-${Math.random().toString(36).substring(2, 9)}`;
-      const accepted = await this.redis.eval(
+      const result = await this.redis.eval(
         `
+          if redis.call('EXISTS', KEYS[2]) == 1 then
+            return 2
+          end
           redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[1])
           local count = redis.call('ZCARD', KEYS[1])
           if count >= tonumber(ARGV[2]) then
@@ -46,17 +62,26 @@ export class MockVerificationService implements OnModuleInit, OnModuleDestroy {
           end
           redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
           redis.call('EXPIRE', KEYS[1], 120)
+          redis.call('SET', KEYS[2], 'accepted', 'EX', 86400)
           return 1
         `,
-        1,
+        2,
         redisKey,
+        idempotencyKey,
         oneMinuteAgo,
         100,
         now,
         uniqueId,
       );
 
-      if (accepted !== 1) {
+      if (result === 2) {
+        this.logger.log(
+          `Mock Verifier: Duplicate request ignored for ${payload.verificationId}`,
+        );
+        return { status: 'accepted' };
+      }
+
+      if (result !== 1) {
         this.logger.warn(
           'Mock Verifier: Rate limit exceeded (100 requests in the last minute)',
         );
@@ -148,6 +173,7 @@ export class MockVerificationService implements OnModuleInit, OnModuleDestroy {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            [WEBHOOK_SIGNATURE_HEADER]: signWebhookPayload(body),
           },
           body: JSON.stringify(body),
         });

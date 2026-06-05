@@ -8,6 +8,7 @@ import {
   BadRequestException,
   Req,
   UseGuards,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -43,10 +44,13 @@ export class DocumentsController {
         },
       }),
       fileFilter: (req, file, callback) => {
-        // Accept only PDF, PNG, JPG, JPEG
         const allowedExts = ['.pdf', '.png', '.jpg', '.jpeg'];
+        const allowedMimeTypes = ['application/pdf', 'image/png', 'image/jpeg'];
         const ext = path.extname(file.originalname).toLowerCase();
-        if (!allowedExts.includes(ext)) {
+        if (
+          !allowedExts.includes(ext) ||
+          !allowedMimeTypes.includes(file.mimetype)
+        ) {
           return callback(
             new BadRequestException(
               'Only PDF, PNG, JPG, JPEG documents are allowed',
@@ -71,29 +75,62 @@ export class DocumentsController {
     }
 
     if (!documentType) {
+      await fs.promises.unlink(file.path).catch(() => undefined);
       throw new BadRequestException('documentType is required');
     }
 
     const allowedTypes = ['business_license', 'tax_registration'];
 
     if (!allowedTypes.includes(documentType)) {
+      await fs.promises.unlink(file.path).catch(() => undefined);
       throw new BadRequestException(
         'Invalid documentType. Must be business_license or tax_registration',
       );
     }
 
+    if (!(await hasAllowedFileSignature(file.path))) {
+      await fs.promises.unlink(file.path).catch(() => undefined);
+      throw new BadRequestException('Document content does not match its type');
+    }
+
     const sellerId = req.user.id;
 
-    return this.documentsService.uploadAndQueue({
-      sellerId,
-      fileName: file.filename, // Store unique saved filename
-      documentType,
-    });
+    try {
+      return await this.documentsService.uploadAndQueue({
+        sellerId,
+        fileName: file.filename,
+        documentType,
+      });
+    } catch (error) {
+      if (!(error instanceof ServiceUnavailableException)) {
+        await fs.promises.unlink(file.path).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   @Get('status')
   async getStatus(@Req() req: AuthenticatedRequest) {
     const sellerId = req.user.id;
     return this.documentsService.getVerificationStatus(sellerId);
+  }
+}
+
+async function hasAllowedFileSignature(filePath: string): Promise<boolean> {
+  const handle = await fs.promises.open(filePath, 'r');
+
+  try {
+    const buffer = Buffer.alloc(4);
+    await handle.read(buffer, 0, buffer.length, 0);
+    const hex = buffer.toString('hex');
+    const ascii = buffer.toString('ascii');
+
+    return (
+      ascii.startsWith('%PDF') ||
+      hex.startsWith('89504e47') ||
+      hex.startsWith('ffd8ff')
+    );
+  } finally {
+    await handle.close();
   }
 }

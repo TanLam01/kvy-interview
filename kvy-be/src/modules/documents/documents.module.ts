@@ -4,6 +4,7 @@ import { DocumentsService } from './documents.service';
 import { DocumentsController } from './documents.controller';
 import { VerificationProcessor } from './verification.processor';
 import { VerifierProxyModule } from '../verifier-proxy/verifier-proxy.module';
+import { VerificationReconciliationService } from './verification-reconciliation.service';
 
 @Module({
   imports: [
@@ -13,7 +14,11 @@ import { VerifierProxyModule } from '../verifier-proxy/verifier-proxy.module';
     VerifierProxyModule,
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService, VerificationProcessor],
+  providers: [
+    DocumentsService,
+    VerificationProcessor,
+    VerificationReconciliationService,
+  ],
   exports: [DocumentsService],
 })
 export class DocumentsModule {}

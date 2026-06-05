@@ -11,7 +11,11 @@ import {
   ConflictException,
   HttpStatus,
   HttpCode,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { RolesGuard, Roles } from '../auth/guards/roles.guard';
@@ -23,6 +27,17 @@ import { AdminDecisionDto } from './dto/admin-decision.dto';
 @Controller('admin/verifications')
 export class AdminController {
   constructor(private readonly prisma: PrismaService) {}
+
+  @Get()
+  async getAllVerifications() {
+    return this.prisma.verification.findMany({
+      include: {
+        document: true,
+      },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+  }
 
   // 1. Get all inconclusive reviews pending manual action
   @Get('pending')
@@ -54,6 +69,30 @@ export class AdminController {
     }
 
     return verification;
+  }
+
+  @Get(':id/document')
+  async downloadDocument(@Param('id') id: string, @Res() response: Response) {
+    const verification = await this.prisma.verification.findUnique({
+      where: { id },
+      include: { document: true },
+    });
+
+    if (!verification) {
+      throw new NotFoundException(`Verification with ID ${id} not found`);
+    }
+
+    const uploadRoot = path.resolve('./uploads');
+    const filePath = path.resolve(uploadRoot, verification.document.fileName);
+
+    if (
+      !filePath.startsWith(`${uploadRoot}${path.sep}`) ||
+      !fs.existsSync(filePath)
+    ) {
+      throw new NotFoundException('Document file not found');
+    }
+
+    return response.sendFile(filePath);
   }
 
   // 3. Make a final decision (Approve / Reject)
@@ -111,6 +150,17 @@ export class AdminController {
           fromStatus: 'UNDER_MANUAL_REVIEW',
           toStatus: newStatus,
           reason: reason || `Admin manual decision: ${action.toUpperCase()}`,
+        },
+      });
+
+      await tx.verificationEvent.create({
+        data: {
+          verificationId: id,
+          actorType: 'SYSTEM',
+          action: 'SELLER_NOTIFICATION',
+          fromStatus: newStatus,
+          toStatus: newStatus,
+          reason: reason || `Seller notified of final outcome: ${newStatus}`,
         },
       });
 

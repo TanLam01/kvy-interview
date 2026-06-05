@@ -1,4 +1,9 @@
-import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -107,14 +112,26 @@ export class DocumentsService {
         },
       );
     } catch {
-      await this.prisma.verification.update({
-        where: { id: result.verification.id },
-        data: {
-          status: 'NEEDS_ATTENTION',
-          reason: 'Failed to enqueue verification request.',
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await tx.verification.update({
+          where: { id: result.verification.id },
+          data: {
+            status: 'NEEDS_ATTENTION',
+            reason: 'Failed to enqueue verification request.',
+          },
+        });
+        await tx.verificationEvent.create({
+          data: {
+            verificationId: result.verification.id,
+            actorType: 'SYSTEM',
+            action: 'ENQUEUE_FAIL',
+            fromStatus: 'QUEUED',
+            toStatus: 'NEEDS_ATTENTION',
+            reason: 'Failed to enqueue verification request.',
+          },
+        });
       });
-      throw new BadRequestException(
+      throw new ServiceUnavailableException(
         'Document was saved, but verification could not be queued. Please contact support.',
       );
     }
