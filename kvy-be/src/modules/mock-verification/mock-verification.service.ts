@@ -127,13 +127,13 @@ export class MockVerificationService implements OnModuleInit, OnModuleDestroy {
           if (rand < 0.45) {
             result = 'verified';
           } else if (rand < 0.9) {
-            result = 'rejected';
-            reason =
-              'Business registration number or tax ID could not be found in official directories.';
-          } else {
             result = 'inconclusive';
             reason =
               'Document resolution is too low or contains illegible signatures. Manual review required.';
+          } else {
+            result = 'rejected';
+            reason =
+              'Business registration number or tax ID could not be found in official directories.';
           }
 
           this.logger.log(
